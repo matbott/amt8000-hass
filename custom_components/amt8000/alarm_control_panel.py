@@ -30,18 +30,19 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the entries for amt-8000."""
-    data = hass.data[DOMAIN][config_entry.entry_id]
-    isec_client = ISecClient(data["host"], data["port"])
-    coordinator = AmtCoordinator(hass, isec_client, data["password"])
-    LOGGER.info('setting up...')
-    # coordinator.async_config_entry_first_refresh() # Se recomienda usar esto para la primera actualización
-                                                    # en lugar de iniciar con el estado None.
-                                                    # Si da problemas de inicio, puedes descomentarlo.
-    sensors = [AmtAlarmPanel(coordinator, isec_client, data['password'])]
+    # Accedemos al coordinador que ya fue creado y guardado en hass.data por __init__.py
+    coordinator: AmtCoordinator = hass.data[DOMAIN][config_entry.entry_id]['coordinator']
+    isec_client = coordinator.isec_client # Obtenemos el cliente del coordinador
+    password = coordinator.password # Obtenemos la contraseña del coordinador
+    
+    LOGGER.info('setting up alarm control panel...')
+    sensors = [AmtAlarmPanel(coordinator, isec_client, password)]
     async_add_entities(sensors)
 
 
 class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
+    # ... (el resto de la clase AmtAlarmPanel es el mismo que te di antes,
+    #      incluyendo la propiedad extra_state_attributes y los async_add_executor_job) ...
     """Define a Amt Alarm Panel."""
 
     _attr_supported_features = (
@@ -194,4 +195,4 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
         await self.hass.async_add_executor_job(self._disarm)
-
+    
