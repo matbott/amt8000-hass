@@ -41,8 +41,6 @@ async def async_setup_entry(
 
 
 class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
-    # ... (el resto de la clase AmtAlarmPanel es el mismo que te di antes,
-    #      incluyendo la propiedad extra_state_attributes y los async_add_executor_job) ...
     """Define a Amt Alarm Panel."""
 
     _attr_supported_features = (
@@ -55,7 +53,7 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     def __init__(self, coordinator, isec_client: ISecClient, password):
         """Initialize the sensor."""
         super().__init__(coordinator)
-        self.status = None # Al inicio, el estado es None. Se actualiza con el coordinador.
+        self.status = None
         self.isec_client = isec_client
         self.password = password
         self._is_on = False
@@ -79,7 +77,6 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        # La entidad estará disponible si el coordinador tiene datos.
         return self.status is not None and self.coordinator.last_update_success
 
     @property
@@ -88,15 +85,14 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         if self.status is None:
             return "unknown"
 
-        if self.status.get('siren') is True: # Usar .get() para mayor robustez
+        if self.status.get('siren') is True:
             return "triggered"
 
-        # Asegúrate de que 'status' exista y sea un string antes de usar .startswith
         current_status = self.status.get("status")
         if current_status and current_status.startswith("armed_"):
           self._is_on = True
         else:
-          self._is_on = False # Importante: si no está armado, _is_on debe ser False
+          self._is_on = False
 
         return current_status if current_status else "unknown"
 
@@ -106,21 +102,28 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         if self.status is None:
             return None
         
-        # Mapeamos los datos decodificados del coordinador a atributos de la entidad.
-        # Esto incluye todos los campos que tu build_status ya decodifica.
         return {
             "model": self.status.get("model", "unknown"),
             "version": self.status.get("version", "unknown"),
             "zones_firing": self.status.get("zonesFiring", False),
             "zones_closed": self.status.get("zonesClosed", False),
-            "siren_active": self.status.get("siren", False), # Renombrado para claridad
+            "siren_active": self.status.get("siren", False),
             "battery_status": self.status.get("batteryStatus", "unknown"),
             "tamper_detected": self.status.get("tamper", False),
-            # Puedes añadir más atributos aquí si descubres más información del protocolo
         }
 
-    # Los métodos de control como _arm_away, _disarm, _trigger_alarm
-    # se mantienen igual, ya que ellos ya usan client.connect/auth/close.
+    @property
+    def device_info(self) -> dict[str, Any]:
+        """Return device information."""
+        # Esta es la parte clave para agrupar las entidades bajo un dispositivo
+        return {
+            "identifiers": {(DOMAIN, self.coordinator.config_entry.entry_id)}, # Identificador único para el dispositivo
+            "name": "AMT-8000 Alarm Panel", # Nombre del dispositivo
+            "manufacturer": "Intelbras",
+            "model": self.coordinator.data.get("model", "AMT-8000"),
+            "sw_version": self.coordinator.data.get("version", "Unknown"),
+        }
+
     def _arm_away(self):
         """Arm AMT in away mode"""
         self.isec_client.connect()
@@ -177,10 +180,8 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     @property
     def is_on(self) -> bool | None:
         """Return True if entity is on."""
-        # Se actualiza directamente desde el estado decodificado
         return self._is_on
 
-    # Los métodos turn_on y turn_off ya llaman a arm_away y disarm respectivamente
     def turn_on(self, **kwargs: Any) -> None:
         self._arm_away()
 
@@ -195,4 +196,4 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
         await self.hass.async_add_executor_job(self._disarm)
-    
+
