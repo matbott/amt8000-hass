@@ -4,11 +4,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity # Importar SensorEntity
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity # Importar CoordinatorEntity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import AmtCoordinator
@@ -21,32 +21,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the sensor platform."""
-    coordinator: AmtCoordinator = hass.data[DOMAIN][config_entry.entry_id]['coordinator'] # Asume que el coordinador se guarda así
+    # Accedemos al coordinador que ya fue creado y guardado en hass.data por __init__.py
+    coordinator: AmtCoordinator = hass.data[DOMAIN][config_entry.entry_id]['coordinator']
     
-    # Si el coordinador no está en entry.data, se debe modificar __init__.py o coordinator.py
-    # para que sea accesible. La integración actual lo hace directamente en coordinator.py
-    # y lo pasa a alarm_control_panel.
-    # Necesitamos acceder a la instancia del coordinador desde aquí.
-    # Una forma segura es que en __init__.py lo guardes en hass.data[DOMAIN][entry.entry_id]['coordinator']
-    # Por ahora, asumo que el coordinador se pasa directamente como data['coordinator']
-    
-    # Si tu coordinador se inicializa como antes, necesitamos una pequeña modificación en __init__.py
-    # para que sea accesible aquí. La forma actual de tu init no lo guarda directamente.
-    # Vamos a asumir que el coordinador es el que se pasa en el setup_entry en alarm_control_panel.py
-    # Si el coordinador ya está disponible en hass.data[DOMAIN][config_entry.entry_id]['coordinator'] (por ejemplo, si lo añades en __init__.py),
-    # puedes usarlo directamente.
-
-    # Una forma de asegurar que el coordinador esté accesible para todos los sensores:
-    # Modificar __init__.py para guardar la instancia del coordinador.
-    # Ver la sección de "Notas Importantes" al final para esta modificación.
-    
-    # Por ahora, para que funcione con tu estructura actual (donde el coordinador se crea en cada plataforma):
-    # Esto es menos eficiente si el coordinador ya se creó en alarm_control_panel.
-    # Si el coordinador es compartido, el objeto debe ser el mismo.
-    # Modificación para compartir el coordinador:
-    isec_client = coordinator.isec_client # Reusa el cliente del coordinador
-    password = coordinator.password
-    
+    LOGGER.info('setting up sensor entities...')
     entities: list[SensorEntity] = [
         AmtBatteryStatusSensor(coordinator),
     ]
@@ -54,6 +32,7 @@ async def async_setup_entry(
 
 
 class AmtBatteryStatusSensor(CoordinatorEntity, SensorEntity):
+    # ... (el resto de la clase es el mismo) ...
     """Representation of an AMT-8000 Battery Status Sensor."""
 
     def __init__(self, coordinator: AmtCoordinator) -> None:
@@ -95,4 +74,4 @@ class AmtBatteryStatusSensor(CoordinatorEntity, SensorEntity):
             "model": self.coordinator.data.get("model", "AMT-8000"),
             "sw_version": self.coordinator.data.get("version", "Unknown"),
         }
-
+        
