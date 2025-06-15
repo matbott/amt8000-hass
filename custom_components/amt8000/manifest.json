@@ -4,9 +4,9 @@
   "codeowners": ["@merencia"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/merencia/amt8000-hass-integration",
+  "documentation": "https://github.com/matbott/amt8000-hass",
   "iot_class": "local_polling",
   "requirements": [],
-  "issue_tracker": "https://github.com/merencia/amt8000-hass-integration/issues",
-  "version": "0.3
+  "issue_tracker": "https://github.com/matbott/amt8000-hass/issues",
+  "version": "0.3"
 }
