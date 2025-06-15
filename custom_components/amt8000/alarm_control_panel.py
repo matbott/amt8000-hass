@@ -34,7 +34,9 @@ async def async_setup_entry(
     isec_client = ISecClient(data["host"], data["port"])
     coordinator = AmtCoordinator(hass, isec_client, data["password"])
     LOGGER.info('setting up...')
-    # coordinator.async_config_entry_first_refresh()
+    # coordinator.async_config_entry_first_refresh() # Se recomienda usar esto para la primera actualización
+                                                    # en lugar de iniciar con el estado None.
+                                                    # Si da problemas de inicio, puedes descomentarlo.
     sensors = [AmtAlarmPanel(coordinator, isec_client, data['password'])]
     async_add_entities(sensors)
 
@@ -52,7 +54,7 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     def __init__(self, coordinator, isec_client: ISecClient, password):
         """Initialize the sensor."""
         super().__init__(coordinator)
-        self.status = None
+        self.status = None # Al inicio, el estado es None. Se actualiza con el coordinador.
         self.isec_client = isec_client
         self.password = password
         self._is_on = False
@@ -76,7 +78,8 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        return self.status is not None
+        # La entidad estará disponible si el coordinador tiene datos.
+        return self.status is not None and self.coordinator.last_update_success
 
     @property
     def state(self) -> str:
@@ -84,14 +87,39 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         if self.status is None:
             return "unknown"
 
-        if self.status['siren'] == True:
+        if self.status.get('siren') is True: # Usar .get() para mayor robustez
             return "triggered"
 
-        if(self.status["status"].startswith("armed_")):
+        # Asegúrate de que 'status' exista y sea un string antes de usar .startswith
+        current_status = self.status.get("status")
+        if current_status and current_status.startswith("armed_"):
           self._is_on = True
+        else:
+          self._is_on = False # Importante: si no está armado, _is_on debe ser False
 
-        return self.status["status"]
+        return current_status if current_status else "unknown"
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return the state attributes."""
+        if self.status is None:
+            return None
+        
+        # Mapeamos los datos decodificados del coordinador a atributos de la entidad.
+        # Esto incluye todos los campos que tu build_status ya decodifica.
+        return {
+            "model": self.status.get("model", "unknown"),
+            "version": self.status.get("version", "unknown"),
+            "zones_firing": self.status.get("zonesFiring", False),
+            "zones_closed": self.status.get("zonesClosed", False),
+            "siren_active": self.status.get("siren", False), # Renombrado para claridad
+            "battery_status": self.status.get("batteryStatus", "unknown"),
+            "tamper_detected": self.status.get("tamper", False),
+            # Puedes añadir más atributos aquí si descubres más información del protocolo
+        }
+
+    # Los métodos de control como _arm_away, _disarm, _trigger_alarm
+    # se mantienen igual, ya que ellos ya usan client.connect/auth/close.
     def _arm_away(self):
         """Arm AMT in away mode"""
         self.isec_client.connect()
@@ -127,7 +155,7 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
 
     async def async_alarm_disarm(self, code=None) -> None:
         """Send disarm command."""
-        self._disarm()
+        await self.hass.async_add_executor_job(self._disarm)
 
     def alarm_arm_away(self, code=None) -> None:
         """Send arm away command."""
@@ -135,7 +163,7 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
 
     async def async_alarm_arm_away(self, code=None) -> None:
         """Send arm away command."""
-        self._arm_away()
+        await self.hass.async_add_executor_job(self._arm_away)
 
     def alarm_trigger(self, code=None) -> None:
         """Send alarm trigger command."""
@@ -143,19 +171,21 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
 
     async def async_alarm_trigger(self, code=None) -> None:
         """Send alarm trigger command."""
-        self._trigger_alarm()
+        await self.hass.async_add_executor_job(self._trigger_alarm)
 
     @property
     def is_on(self) -> bool | None:
         """Return True if entity is on."""
+        # Se actualiza directamente desde el estado decodificado
         return self._is_on
 
+    # Los métodos turn_on y turn_off ya llaman a arm_away y disarm respectivamente
     def turn_on(self, **kwargs: Any) -> None:
         self._arm_away()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the entity on."""
-        self._arm_away()
+        await self.hass.async_add_executor_job(self._arm_away)
 
     def turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
@@ -163,5 +193,5 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
-        self._disarm()
+        await self.hass.async_add_executor_job(self._disarm)
 
