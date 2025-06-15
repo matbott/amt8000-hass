@@ -3,6 +3,7 @@ from datetime import timedelta, datetime
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
+from homeassistant.config_entries import ConfigEntry # Importar ConfigEntry
 
 from .isec2.client import Client as ISecClient
 
@@ -13,7 +14,7 @@ LOGGER = logging.getLogger(__name__)
 class AmtCoordinator(DataUpdateCoordinator):
     """Coordinate the amt status update."""
 
-    def __init__(self, hass, isec_client: ISecClient, password):
+    def __init__(self, hass, isec_client: ISecClient, password: str, config_entry: ConfigEntry):
         """Initialize my coordinator."""
         super().__init__(
             hass,
@@ -23,6 +24,7 @@ class AmtCoordinator(DataUpdateCoordinator):
         )
         self.isec_client = isec_client
         self.password = password
+        self.config_entry = config_entry # Almacenar la instancia de ConfigEntry
         self.next_update = datetime.now()
         self.stored_status = None
         self.attemt = 0
@@ -52,7 +54,6 @@ class AmtCoordinator(DataUpdateCoordinator):
           seconds = 2 ** self.attemt
           time_difference = timedelta(seconds=seconds)
           self.next_update = datetime.now() + time_difference
-          print(f"Next retry after {self.next_update}")
+          print(f"Next update in {seconds} seconds.")
+          raise # Vuelve a lanzar la excepción para que el coordinador marque el fallo de actualización
 
-        finally:
-           self.isec_client.close()
