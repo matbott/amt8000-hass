@@ -4,11 +4,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.binary_sensor import BinarySensorEntity # Importar BinarySensorEntity
+from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity # Importar CoordinatorEntity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import AmtCoordinator
@@ -21,8 +21,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the binary sensor platform."""
-    coordinator: AmtCoordinator = hass.data[DOMAIN][config_entry.entry_id]['coordinator'] # Asume que el coordinador se guarda así
+    # Accedemos al coordinador que ya fue creado y guardado en hass.data por __init__.py
+    coordinator: AmtCoordinator = hass.data[DOMAIN][config_entry.entry_id]['coordinator']
     
+    LOGGER.info('setting up binary sensor entities...')
     entities: list[BinarySensorEntity] = [
         AmtZonesClosedSensor(coordinator),
         AmtSirenSensor(coordinator),
@@ -32,6 +34,7 @@ async def async_setup_entry(
 
 
 class AmtZonesClosedSensor(CoordinatorEntity, BinarySensorEntity):
+    # ... (el resto de la clase es el mismo) ...
     """Representation of an AMT-8000 Zones Closed Sensor."""
 
     def __init__(self, coordinator: AmtCoordinator) -> None:
@@ -71,6 +74,7 @@ class AmtZonesClosedSensor(CoordinatorEntity, BinarySensorEntity):
 
 
 class AmtSirenSensor(CoordinatorEntity, BinarySensorEntity):
+    # ... (el resto de la clase es el mismo) ...
     """Representation of an AMT-8000 Siren Sensor."""
 
     def __init__(self, coordinator: AmtCoordinator) -> None:
@@ -110,6 +114,7 @@ class AmtSirenSensor(CoordinatorEntity, BinarySensorEntity):
 
 
 class AmtTamperSensor(CoordinatorEntity, BinarySensorEntity):
+    # ... (el resto de la clase es el mismo) ...
     """Representation of an AMT-8000 Tamper Sensor."""
 
     def __init__(self, coordinator: AmtCoordinator) -> None:
@@ -146,3 +151,4 @@ class AmtTamperSensor(CoordinatorEntity, BinarySensorEntity):
             "model": self.coordinator.data.get("model", "AMT-8000"),
             "sw_version": self.coordinator.data.get("version", "Unknown"),
         }
+
