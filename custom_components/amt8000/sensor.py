@@ -85,9 +85,9 @@ class AmtBatteryStatusSensor(CoordinatorEntity, SensorEntity):
 
     _attr_has_entity_name = True
     _attr_name = "Battery Status"
-    _attr_device_class = SensorDeviceClass.BATTERY
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:battery"
+    _attr_native_unit_of_measurement = "%"
 
     def __init__(self, coordinator: AmtCoordinator) -> None:
         """Initialize the sensor."""
@@ -100,11 +100,22 @@ class AmtBatteryStatusSensor(CoordinatorEntity, SensorEntity):
         panel_data = self.coordinator.panel_data
         if panel_data:
             battery_status = panel_data.get("batteryStatus", "unknown")
-            self._attr_native_value = self._map_battery_status(battery_status)
+            self._attr_native_value = self._map_battery_to_percentage(battery_status)
             self._attr_icon = self._get_battery_icon(battery_status)
         else:
             self._attr_native_value = None
         self.async_write_ha_state()
+
+    def _map_battery_to_percentage(self, status: str) -> int | None:
+        """Map battery status to percentage value."""
+        status_map = {
+            "full": 100,
+            "ok": 75,
+            "low": 25,
+            "critical": 10,
+            "unknown": None,
+        }
+        return status_map.get(status.lower(), None)
 
     def _map_battery_status(self, status: str) -> str:
         """Map battery status to human readable format."""
@@ -127,7 +138,17 @@ class AmtBatteryStatusSensor(CoordinatorEntity, SensorEntity):
             return "mdi:battery-unknown"
 
     @property
-    def available(self) -> bool:
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        panel_data = self.coordinator.panel_data
+        if not panel_data:
+            return {}
+        
+        battery_status = panel_data.get("batteryStatus", "unknown")
+        return {
+            "battery_status_text": self._map_battery_status(battery_status),
+            "raw_battery_status": battery_status,
+        }
         """Return True if entity is available."""
         return self.coordinator.last_update_success and bool(self.coordinator.panel_data)
 
