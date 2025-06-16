@@ -62,6 +62,15 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     _attr_has_entity_name = True
     _attr_name = "Alarm Panel"
     _attr_code_format = None  # No se requiere código para operar
+
+    def requires_code_to_arm(self) -> bool:
+        """Indicar que no se requiere código para armar."""
+        return False
+
+    def requires_code_to_disarm(self) -> bool:
+        """Indicar que no se requiere código para desarmar."""
+        return False
+
     
     def __init__(self, coordinator: AmtCoordinator, password: str, host: str) -> None:
         """Initialize the alarm panel."""
