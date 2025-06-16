@@ -7,37 +7,36 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 
 from .const import DOMAIN
-from .isec2.client import Client as ISecClient # Importar el cliente
-from .coordinator import AmtCoordinator # Importar el coordinador
+from .coordinator import AmtCoordinator # <-- AÑADIDO: Importar el coordinador
+from .isec2.client import Client as ISecClient # <-- AÑADIDO: Importar el cliente ISEC
+
 
 LOGGER = logging.getLogger(__name__)
 
-# Agregamos 'sensor' y 'binary_sensor' a la lista de plataformas
-PLATFORMS: list[str] = ["alarm_control_panel", "sensor", "binary_sensor"]
+# AÑADIDO "sensor" a la lista de plataformas
+PLATFORMS: list[str] = ["alarm_control_panel", "sensor"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up AMT-8000 from a config entry."""
+    hass.data.setdefault(DOMAIN, {})
 
-    # Creamos el cliente y el coordinador una sola vez
+    # AÑADIDO: Crear la instancia del cliente ISEC
     isec_client = ISecClient(entry.data["host"], entry.data["port"])
-    coordinator = AmtCoordinator(hass, isec_client, entry.data["password"], entry) # Pasamos 'entry' al coordinador
-    
-    # Realizamos la primera actualización de datos para asegurar que haya algo antes de que se carguen las entidades
+
+    # AÑADIDO: Crear la instancia del coordinador, pasándole la 'entry' completa
+    coordinator = AmtCoordinator(hass, isec_client, entry.data["password"], entry)
+
+    # AÑADIDO: Realizar la primera actualización para obtener datos iniciales y las zonas emparejadas
     await coordinator.async_config_entry_first_refresh()
 
-    # Guardamos la instancia del coordinador en hass.data para que otras plataformas puedan acceder a ella
-    hass.data.setdefault(DOMAIN, {})
+    # MODIFICADO: Guardar el coordinador y la configuración en hass.data
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
-        # Puedes guardar aquí otros datos de la configuración si es necesario,
-        # pero el coordinador ya tiene el cliente y la contraseña.
-        "host": entry.data["host"],
-        "port": entry.data["port"],
-        "password": entry.data["password"],
+        "config": entry.data, # Mantener la configuración original también para accesos directos
+        # No es necesario guardar isec_client aquí directamente, el coordinador lo tiene.
     }
 
-    # Ahora forwardeamos la configuración a todas las plataformas
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
@@ -50,4 +49,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
-
