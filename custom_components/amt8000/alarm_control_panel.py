@@ -70,7 +70,6 @@ class AmtAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     def requires_code_to_disarm(self) -> bool:
         """Indicar que no se requiere código para desarmar."""
         return False
-
     
     def __init__(self, coordinator: AmtCoordinator, password: str, host: str) -> None:
         """Initialize the alarm panel."""
