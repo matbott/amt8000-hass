@@ -28,9 +28,10 @@ LOGGER = logging.getLogger(__name__)
 
 # Mapeo de estados de zona del protocolo AMT a estados legibles
 ZONE_STATE_MAP = {
-    "normal": "seguro",
+    "normal": "normal",
     "triggered": "disparado",
-    "open": "abierto",
+    "open": "closed",           # INVERTIDO: open del protocolo = closed en display
+    "closed": "open",           # INVERTIDO: closed del protocolo = open en display
     "tamper": "violado",
     "bypassed": "ignorado",
     "low_battery": "bateria_fraca",
@@ -323,11 +324,12 @@ class AMTZoneSensor(CoordinatorEntity, SensorEntity):
     @property
     def icon(self) -> str:
         """Return the icon for the sensor."""
-        zone_status = self.coordinator.zones_data.get(self._zone_id, "normal")
+        zones_data = self.coordinator.zones_data
+        zone_status = zones_data.get(self._zone_id, "normal")
         
         if any(critical in str(zone_status) for critical in CRITICAL_STATES):
             return "mdi:shield-alert"
-        elif zone_status == "normal":
+        elif zone_status in ["normal", "open"]:  # Estados seguros
             return "mdi:shield-check"
         else:
             return "mdi:shield-half-full"
@@ -338,15 +340,18 @@ class AMTZoneSensor(CoordinatorEntity, SensorEntity):
         zones_data = self.coordinator.zones_data
         zone_status = zones_data.get(self._zone_id, "normal")
 
-        # Convertir estados separados por coma a lista
+        # Mostrar "no hay" cuando no hay problemas en el sensor principal también
+        problems = []
         if isinstance(zone_status, str) and "," in zone_status:
             problems = zone_status.split(",")
-        else:
-            problems = [zone_status] if zone_status else ["normal"]
+        elif zone_status and zone_status != "normal":
+            problems = [zone_status]
+        
+        display_problems = problems if problems else ["no hay"]
 
         return {
             "raw_status": zone_status,
-            "problems": problems,
+            "problems": display_problems,
             "zone_id": self._zone_id,
             "is_critical": any(critical in str(zone_status) for critical in CRITICAL_STATES),
         }
@@ -399,7 +404,7 @@ class AMTZoneBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def icon(self) -> str:
         """Return the icon for the sensor."""
-        return "mdi:alarm-light" if self.is_on else "mdi:shield-check"
+        return "mdi:shield-alert" if self.is_on else "mdi:shield-check"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -407,9 +412,19 @@ class AMTZoneBinarySensor(CoordinatorEntity, BinarySensorEntity):
         zones_data = self.coordinator.zones_data
         zone_status = zones_data.get(self._zone_id, "normal")
         
+        # Mostrar "no hay" cuando no hay problemas
+        problems = []
+        if isinstance(zone_status, str) and "," in zone_status:
+            problems = zone_status.split(",")
+        elif zone_status and zone_status != "normal":
+            problems = [zone_status]
+        
+        display_problems = problems if problems else ["no hay"]
+        
         return {
             "zone_id": self._zone_id,
             "raw_status": zone_status,
+            "problems": display_problems,
             "alarm_active": self.is_on,
         }
 
