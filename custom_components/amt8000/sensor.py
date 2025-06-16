@@ -1,4 +1,4 @@
-"""Sensors (zones) for the Intelbras AMT-8000."""
+"""Sensors (zones) for the Intelbras AMT-8000-MF."""
 
 from __future__ import annotations
 
