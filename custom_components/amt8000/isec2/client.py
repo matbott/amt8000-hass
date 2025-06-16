@@ -2,6 +2,7 @@
 
 import socket
 import logging
+from typing import Dict, Any # Import for type hinting
 
 LOGGER = logging.getLogger(__name__)
 
@@ -13,8 +14,13 @@ commands = {
     "auth": [0xF0, 0xF0],
     "status": [0x0B, 0x4A],
     "arm_disarm": [0x40, 0x1e],
-    "panic": [0x40, 0x1a]
+    "panic": [0x40, 0x1a],
+    "paired_sensors": [0x0B, 0x01] # ADDED: Command for paired sensors
 }
+
+# Constantes para el procesamiento de zonas
+ZONE_PAYLOAD_OFFSET = 64  # The first zone byte within the payload (from the fork)
+MAX_ZONES = 64 # Maximum number of zones that can be read (8 bytes * 8 bits)
 
 def split_into_octets(n):
     """Splits an integer into high and low bytes."""
@@ -73,8 +79,8 @@ def get_status(payload):
     return "unknown"
 
 # --- build_status mejorado para manejar el payload completo y robustez ---
-def build_status(data):
-    """Build the amt-8000 status from a given array of bytes."""
+def build_status(data: bytearray) -> Dict[str, Any]: # Added type hints for clarity
+    """Build the amt-8000 status from a given array of bytes, including zone status."""
     if len(data) < 8:
         LOGGER.error("Received status data is too short (less than 8 bytes). Data: %s", data.hex())
         return {
@@ -86,6 +92,7 @@ def build_status(data):
             "siren": False,
             "batteryStatus": "unknown",
             "tamper": False,
+            "zones": {} # Added zones to initial return
         }
 
     # El campo de longitud del paquete se encuentra en los bytes 4 y 5
@@ -101,47 +108,11 @@ def build_status(data):
             "siren": False,
             "batteryStatus": "unknown",
             "tamper": False,
+            "zones": {} # Added zones to initial return
         }
 
-    # La longitud total del payload, incluyendo el byte de comando (0x0B, 0x4A)
-    # y el byte de resultado (0x91), es lo que indica el campo de longitud.
-    # El payload "real" que queremos decodificar empieza después de los 8 primeros bytes
-    # del encabezado de la respuesta y los 2 bytes del comando 'status'
-    # La integración original parece esperar que los bytes 4 y 5 representen
-    # la longitud del payload DESPUÉS de los 8 bytes de encabezado y del comando.
-    # Con el payload 8fff000000910b4a010203...
-    # bytes 4 y 5 son 00 91 -> 145.
-    # payload real (después del encabezado y el comando) debería ser 145 bytes.
-    # Por eso, el original (merge_octets(data[4:6]) - 2)
-    # era para el comando 0x0B, 0x4A que tiene 2 bytes.
-    # En este caso, el payload "útil" empieza después de byte 8.
-    
-    # Vamos a usar la longitud de la respuesta que nos da el coordinador
-    # La longitud del payload que `build_status` espera es la que va después de los primeros 8 bytes de encabezado.
-    # El coordinador pasa todo el `return_data` al `build_status`.
-    # El campo de longitud en 00 91 (byte 4 y 5) es la longitud del payload a partir del byte 6.
-    # Es decir, 0B 4A 01 02 03 ... es de 145 bytes.
-    # Si sumamos los 6 bytes de prefijo (dst_id, our_id, length) y el checksum,
-    # el paquete completo es de 6 + 145 + 1 = 152 bytes.
-    
-    # Ajustamos para obtener el payload real (lo que viene después del encabezado de 8 bytes)
-    # El byte 8 en adelante es nuestro payload decodificable.
-    # La longitud total del payload se obtiene del campo de longitud (bytes 4 y 5).
-    # Esta longitud incluye el comando (`0b 4a`) y el resultado (`01`).
-    # La longitud útil que queremos decodificar es `total_payload_length - 2` (quitando 0b 4a)
-    # o simplemente, tomamos desde el byte 8 hasta el final si la respuesta es completa.
-    
-    # La integración de HA pasa el `bytearray` completo recibido por el socket al `build_status`.
-    # El payload útil, como vimos, empieza en el índice 8.
-    
-    # Calculamos la longitud del payload útil esperado
-    # data[4:6] son los bytes que indican la longitud del *resto* del paquete,
-    # que incluye el comando y el payload del comando.
-    expected_payload_length = merge_octets(data[4:6]) # e.g., 0x91 = 145 bytes
+    expected_payload_length = merge_octets(data[4:6])
 
-    # El payload decodificable inicia en el índice 8 del 'data' completo
-    # y su longitud es 'expected_payload_length'.
-    # Si la data recibida es más corta de lo esperado, ajustamos.
     if len(data) < 8 + expected_payload_length:
         LOGGER.warning("Received data is shorter than indicated length. Expected: %d, Received: %d. Data: %s",
                        8 + expected_payload_length, len(data), data.hex())
@@ -177,7 +148,7 @@ def build_status(data):
         LOGGER.debug("Payload too short for full status bits. Length: %d", len(payload))
 
     # Decodificación del estado de la batería
-    status_data["batteryStatus"] = battery_status_for(payload)
+    status_data["batteryStatus"] = battery_status_for(payload) # Use payload here
 
     # Decodificación del tamper
     status_data["tamper"] = False
@@ -185,6 +156,23 @@ def build_status(data):
         status_data["tamper"] = (payload[71] & (1 << 0x01)) > 0
     else:
         LOGGER.debug("Payload too short for tamper status. Length: %d", len(payload))
+
+    # ADDED: Individual zone status processing
+    zones = {}
+    zones_data_start_payload_index = ZONE_PAYLOAD_OFFSET # This is 64 in the payload
+    for byte_index in range(8): # Assuming 8 bytes for 64 zones
+        current_byte_index = zones_data_start_payload_index + byte_index
+        if current_byte_index < len(payload): # Ensure we don't go out of bounds
+            byte_value = payload[current_byte_index]
+            for bit in range(8):
+                zone_number = (byte_index * 8) + bit + 1
+                zone_open = (byte_value & (1 << bit)) == 0 # If bit is 0, zone is OPEN
+                zones[str(zone_number)] = "open" if zone_open else "closed"
+        else:
+            LOGGER.warning(f"Datos de zonas incompletos a partir del byte {current_byte_index} del payload.")
+            break # Exit if no more data
+
+    status_data["zones"] = zones # Add individual zone states
 
     LOGGER.debug("Decoded status: %s", status_data)
     return status_data
@@ -264,7 +252,7 @@ class Client:
                 )
             pass_array.append(int(char))
 
-        length = [0x00, 0x0a]
+        length = [0x00, 0x0a] # THIS IS FROM YOUR UPLOADED CLIENT.PY - ENSURE IT'S CORRECT FOR YOUR PANEL
         data = (
             dst_id
             + our_id
@@ -372,9 +360,9 @@ class Client:
             partition = 0xFF
 
         length = [0x00, 0x04]
-        arm_data = dst_id + our_id + length + commands["arm_disarm"] + [ partition, 0x00 ] # 0x00 for disarm
-        cs = calculate_checksum(arm_data)
-        payload = bytes(arm_data + [cs])
+        disarm_data = dst_id + our_id + length + commands["arm_disarm"] + [ partition, 0x00 ] # 0x00 for disarm
+        cs = calculate_checksum(disarm_data)
+        payload = bytes(disarm_data + [cs])
 
         LOGGER.debug("Sending disarm command: %s", payload.hex())
         try:
@@ -420,4 +408,55 @@ class Client:
         
         LOGGER.warning("Panic command failed. Response: %s", return_data.hex())
         return 'not_triggered'
+    
+    # ADDED: Method to get paired sensors
+    def get_paired_sensors(self) -> Dict[str, bool]:
+        """Get the list of paired sensors from the alarm panel."""
+        if self.client is None:
+            raise CommunicationError("Client not connected. Call Client.connect")
 
+        length = [0x00, 0x02] # Command is 2 bytes
+        sensors_data = dst_id + our_id + length + commands["paired_sensors"]
+        cs = calculate_checksum(sensors_data)
+        payload = bytes(sensors_data + [cs])
+
+        LOGGER.debug("Sending paired sensors command: %s", payload.hex())
+        return_data = bytearray()
+        try:
+            self.client.send(payload)
+            data = self.client.recv(1024) # Read the response
+            return_data.extend(data)
+            LOGGER.debug("Raw paired sensors response: %s", return_data.hex())
+        except socket.timeout:
+            raise CommunicationError("Paired sensors command response timed out.")
+        except OSError as e:
+            raise CommunicationError(f"OS error during paired sensors command: {e}")
+
+        # Check for error response first (0xfd at index 8, if panel sends it)
+        if len(return_data) > 8 and return_data[8] == 0xfd:
+            LOGGER.warning("Panel returned error for get_paired_sensors command (0xfd).")
+            return {} # Return empty if command failed
+
+        # The response starts in the byte 8 (after header)
+        # Each byte represents 8 zones (1 bit per zone)
+        paired_zones = {}
+        try:
+            # Skip header (8 bytes) and read the 8 bytes of zone data
+            for byte_index in range(8):  # 8 bytes = 64 zones
+                # Ensure we have enough data in return_data for the current byte
+                if len(return_data) > 8 + byte_index:
+                    byte_value = return_data[8 + byte_index]
+                    for bit in range(8):
+                        zone_number = (byte_index * 8) + bit + 1
+                        # If the bit is 1, the zone is paired
+                        if (byte_value & (1 << bit)) > 0:
+                            paired_zones[str(zone_number)] = True
+                else:
+                    LOGGER.warning(f"Datos de paired zones incompletos en el byte {byte_index} del payload esperado.")
+                    break # Exit if no more data
+
+        except Exception as e:
+            LOGGER.error(f"Error procesando datos de sensores emparejados: {e}", exc_info=True)
+            return {} # Return an empty dictionary in case of error
+
+        return paired_zones
