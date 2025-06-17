@@ -16,7 +16,7 @@ from .isec2.client import Client as ISecClient, CommunicationError
 LOGGER = logging.getLogger(__name__)
 
 # Plataformas soportadas por la integración
-PLATFORMS: list[str] = ["alarm_control_panel", "sensor"]
+PLATFORMS: list[str] = ["alarm_control_panel", "sensor", "binary_sensor"] 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the AMT-8000 integration."""
