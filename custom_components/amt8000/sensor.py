@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorEntity,
-    SensorDeviceClass,
     SensorStateClass,
 )
 from homeassistant.components.binary_sensor import (
@@ -27,11 +26,14 @@ from .coordinator import AmtCoordinator
 LOGGER = logging.getLogger(__name__)
 
 # Mapeo de estados de zona del protocolo AMT a estados legibles
+# NOTA: Los estados "open" y "closed" están invertidos según el protocolo AMT
+# - "open" del protocolo AMT = "closed" (cerrado) en la interfaz
+# - "closed" del protocolo AMT = "open" (abierto) en la interfaz
 ZONE_STATE_MAP = {
     "normal": "normal",
     "triggered": "disparado",
-    "open": "closed",           # INVERTIDO: open del protocolo = closed en display
-    "closed": "open",           # INVERTIDO: closed del protocolo = open en display
+    "open": "closed",           # Protocolo AMT: open = cerrado
+    "closed": "open",           # Protocolo AMT: closed = abierto
     "tamper": "violado",
     "bypassed": "ignorado",
     "low_battery": "bateria_fraca",
@@ -51,7 +53,6 @@ async def async_setup_entry(
 ) -> None:
     """Set up the sensor platform."""
     coordinator: AmtCoordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
-    config = hass.data[DOMAIN][config_entry.entry_id]["config"]
 
     LOGGER.info("Setting up AMT-8000 sensor entities...")
 
@@ -80,7 +81,62 @@ async def async_setup_entry(
     LOGGER.info(f"Added {len(entities)} AMT-8000 sensor entities")
 
 
-class AmtBatteryStatusSensor(CoordinatorEntity, SensorEntity):
+class AmtBaseEntity(CoordinatorEntity):
+    """Base class for AMT-8000 entities."""
+
+    def __init__(self, coordinator: AmtCoordinator) -> None:
+        """Initialize the base entity."""
+        super().__init__(coordinator)
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information."""
+        panel_data = self.coordinator.panel_data or {}
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
+            name="AMT-8000 Alarm Panel",
+            manufacturer="Intelbras",
+            model=panel_data.get("model", "AMT-8000"),
+            sw_version=panel_data.get("version", "Unknown"),
+            configuration_url=f"http://{self.coordinator.config_entry.data['host']}",
+        )
+
+    def _parse_zone_status(self, zone_status: str | None) -> tuple[list[str], bool]:
+        """Parse zone status and return problems list and critical flag."""
+        if not zone_status or zone_status == "normal":
+            return [], False
+
+        # Manejar estados múltiples (separados por coma)
+        if "," in zone_status:
+            problems = [s.strip() for s in zone_status.split(",")]
+        else:
+            problems = [zone_status]
+
+        # Verificar si hay estados críticos
+        is_critical = any(critical in problems for critical in CRITICAL_STATES)
+        
+        return problems, is_critical
+
+    def _get_most_critical_state(self, problems: list[str]) -> str:
+        """Get the most critical state from a list of problems."""
+        if not problems:
+            return "normal"
+        
+        # Buscar el estado más crítico primero
+        for critical_state in CRITICAL_STATES:
+            if critical_state in problems:
+                return ZONE_STATE_MAP.get(critical_state, critical_state)
+        
+        # Si no hay estados críticos, devolver el primero mapeado
+        for problem in problems:
+            if problem in ZONE_STATE_MAP:
+                return ZONE_STATE_MAP[problem]
+        
+        # Fallback al primer problema
+        return problems[0]
+
+
+class AmtBatteryStatusSensor(AmtBaseEntity, SensorEntity):
     """Representation of an AMT-8000 Battery Status Sensor."""
 
     _attr_has_entity_name = True
@@ -149,28 +205,14 @@ class AmtBatteryStatusSensor(CoordinatorEntity, SensorEntity):
             "battery_status_text": self._map_battery_status(battery_status),
             "raw_battery_status": battery_status,
         }
+
+    @property
+    def available(self) -> bool:
         """Return True if entity is available."""
         return self.coordinator.last_update_success and bool(self.coordinator.panel_data)
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information."""
-        return self._get_device_info()
 
-    def _get_device_info(self) -> DeviceInfo:
-        """Get device info for the AMT-8000 panel."""
-        panel_data = self.coordinator.panel_data
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="AMT-8000 Alarm Panel",
-            manufacturer="Intelbras",
-            model=panel_data.get("model", "AMT-8000"),
-            sw_version=panel_data.get("version", "Unknown"),
-            configuration_url=f"http://{self.coordinator.config_entry.data['host']}",
-        )
-
-
-class AmtSystemStatusSensor(CoordinatorEntity, SensorEntity):
+class AmtSystemStatusSensor(AmtBaseEntity, SensorEntity):
     """Sensor showing overall system status."""
 
     _attr_has_entity_name = True
@@ -240,24 +282,12 @@ class AmtSystemStatusSensor(CoordinatorEntity, SensorEntity):
         }
 
     @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information."""
-        return self._get_device_info()
-
-    def _get_device_info(self) -> DeviceInfo:
-        """Get device info for the AMT-8000 panel."""
-        panel_data = self.coordinator.panel_data
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="AMT-8000 Alarm Panel",
-            manufacturer="Intelbras",
-            model=panel_data.get("model", "AMT-8000"),
-            sw_version=panel_data.get("version", "Unknown"),
-            configuration_url=f"http://{self.coordinator.config_entry.data['host']}",
-        )
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return self.coordinator.last_update_success and bool(self.coordinator.panel_data)
 
 
-class AmtZoneCountSensor(CoordinatorEntity, SensorEntity):
+class AmtZoneCountSensor(AmtBaseEntity, SensorEntity):
     """Sensor showing number of paired zones."""
 
     _attr_has_entity_name = True
@@ -274,13 +304,14 @@ class AmtZoneCountSensor(CoordinatorEntity, SensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        self._attr_native_value = len(self.coordinator.zones_data)
+        zones_data = self.coordinator.zones_data or {}
+        self._attr_native_value = len(zones_data)
         self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
-        zones_data = self.coordinator.zones_data
+        zones_data = self.coordinator.zones_data or {}
         active_zones = sum(1 for status in zones_data.values() if status != "normal")
         
         return {
@@ -290,24 +321,12 @@ class AmtZoneCountSensor(CoordinatorEntity, SensorEntity):
         }
 
     @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information."""
-        return self._get_device_info()
-
-    def _get_device_info(self) -> DeviceInfo:
-        """Get device info for the AMT-8000 panel."""
-        panel_data = self.coordinator.panel_data
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="AMT-8000 Alarm Panel",
-            manufacturer="Intelbras",
-            model=panel_data.get("model", "AMT-8000"),
-            sw_version=panel_data.get("version", "Unknown"),
-            configuration_url=f"http://{self.coordinator.config_entry.data['host']}",
-        )
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return self.coordinator.last_update_success and self.coordinator.zones_data is not None
 
 
-class AMTZoneSensor(CoordinatorEntity, SensorEntity):
+class AMTZoneSensor(AmtBaseEntity, SensorEntity):
     """Represents a zone (sector) of the AMT-8000."""
 
     _attr_should_poll = False
@@ -324,31 +343,21 @@ class AMTZoneSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> str | None:
         """Return the state of the sensor."""
-        zones_data = self.coordinator.zones_data
+        zones_data = self.coordinator.zones_data or {}
         zone_status = zones_data.get(self._zone_id, "normal")
         
-        # Manejar estados múltiples (separados por coma)
-        if isinstance(zone_status, str) and "," in zone_status:
-            problems = zone_status.split(",")
-            # Devolver el estado más crítico
-            for critical_state in CRITICAL_STATES:
-                if critical_state in problems:
-                    return ZONE_STATE_MAP.get(critical_state, critical_state)
-            # Si no hay estados críticos, devolver el primero mapeado
-            for problem in problems:
-                if problem in ZONE_STATE_MAP:
-                    return ZONE_STATE_MAP[problem]
-        
-        # Estado simple
-        return ZONE_STATE_MAP.get(zone_status, zone_status)
+        problems, _ = self._parse_zone_status(zone_status)
+        return self._get_most_critical_state(problems)
 
     @property
     def icon(self) -> str:
         """Return the icon for the sensor."""
-        zones_data = self.coordinator.zones_data
+        zones_data = self.coordinator.zones_data or {}
         zone_status = zones_data.get(self._zone_id, "normal")
         
-        if any(critical in str(zone_status) for critical in CRITICAL_STATES):
+        _, is_critical = self._parse_zone_status(zone_status)
+        
+        if is_critical:
             return "mdi:shield-alert"
         elif zone_status in ["normal", "open"]:  # Estados seguros
             return "mdi:shield-check"
@@ -358,23 +367,17 @@ class AMTZoneSensor(CoordinatorEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the state attributes."""
-        zones_data = self.coordinator.zones_data
+        zones_data = self.coordinator.zones_data or {}
         zone_status = zones_data.get(self._zone_id, "normal")
 
-        # Mostrar "no hay" cuando no hay problemas en el sensor principal también
-        problems = []
-        if isinstance(zone_status, str) and "," in zone_status:
-            problems = zone_status.split(",")
-        elif zone_status and zone_status != "normal":
-            problems = [zone_status]
-        
+        problems, is_critical = self._parse_zone_status(zone_status)
         display_problems = problems if problems else ["no hay"]
 
         return {
             "raw_status": zone_status,
             "problems": display_problems,
             "zone_id": self._zone_id,
-            "is_critical": any(critical in str(zone_status) for critical in CRITICAL_STATES),
+            "is_critical": is_critical,
         }
 
     @property
@@ -382,24 +385,12 @@ class AMTZoneSensor(CoordinatorEntity, SensorEntity):
         """Return True if entity is available."""
         return (
             self.coordinator.last_update_success 
+            and self.coordinator.zones_data is not None
             and self._zone_id in self.coordinator.zones_data
         )
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information for this zone sensor."""
-        panel_data = self.coordinator.panel_data
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="AMT-8000 Alarm Panel",
-            manufacturer="Intelbras",
-            model=panel_data.get("model", "AMT-8000"),
-            sw_version=panel_data.get("version", "Unknown"),
-            configuration_url=f"http://{self.coordinator.config_entry.data['host']}",
-        )
 
-
-class AMTZoneBinarySensor(CoordinatorEntity, BinarySensorEntity):
+class AMTZoneBinarySensor(AmtBaseEntity, BinarySensorEntity):
     """Binary sensor for zone alarm state."""
 
     _attr_should_poll = False
@@ -416,11 +407,11 @@ class AMTZoneBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         """Return True if the zone is in alarm state."""
-        zones_data = self.coordinator.zones_data
+        zones_data = self.coordinator.zones_data or {}
         zone_status = zones_data.get(self._zone_id, "normal")
         
-        # Considerar zona en alarma si tiene algún estado crítico
-        return any(critical in str(zone_status) for critical in CRITICAL_STATES)
+        _, is_critical = self._parse_zone_status(zone_status)
+        return is_critical
 
     @property
     def icon(self) -> str:
@@ -430,23 +421,17 @@ class AMTZoneBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the state attributes."""
-        zones_data = self.coordinator.zones_data
+        zones_data = self.coordinator.zones_data or {}
         zone_status = zones_data.get(self._zone_id, "normal")
         
-        # Mostrar "no hay" cuando no hay problemas
-        problems = []
-        if isinstance(zone_status, str) and "," in zone_status:
-            problems = zone_status.split(",")
-        elif zone_status and zone_status != "normal":
-            problems = [zone_status]
-        
+        problems, is_critical = self._parse_zone_status(zone_status)
         display_problems = problems if problems else ["no hay"]
         
         return {
             "zone_id": self._zone_id,
             "raw_status": zone_status,
             "problems": display_problems,
-            "alarm_active": self.is_on,
+            "alarm_active": is_critical,
         }
 
     @property
@@ -454,18 +439,6 @@ class AMTZoneBinarySensor(CoordinatorEntity, BinarySensorEntity):
         """Return True if entity is available."""
         return (
             self.coordinator.last_update_success 
+            and self.coordinator.zones_data is not None
             and self._zone_id in self.coordinator.zones_data
-        )
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information for this zone sensor."""
-        panel_data = self.coordinator.panel_data
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="AMT-8000 Alarm Panel",
-            manufacturer="Intelbras",
-            model=panel_data.get("model", "AMT-8000"),
-            sw_version=panel_data.get("version", "Unknown"),
-            configuration_url=f"http://{self.coordinator.config_entry.data['host']}",
         )
